@@ -17,32 +17,38 @@ jobs:
       - name: Get project
         uses: actions/checkout@v4
 
-      - name: Unpack source ZIP if present
+      - name: Unpack source ZIP
         shell: bash
         run: |
           set -euo pipefail
           ZIP="Slendytubbies_Lost_Chapter_iPhone_0.7_Source_and_Build.zip"
           if [ -f "$ZIP" ]; then
-            echo "Extracting $ZIP"
             unzip -oq "$ZIP" -d .
-          else
-            echo "No ZIP found: checking for already extracted project files"
           fi
-          if [ ! -s "Resources/Models.scnassets/guardian.obj" ]; then
-            echo "::error::Missing Resources/Models.scnassets/guardian.obj. Upload the full 0.7 ZIP at the repository root (not only the YAML)."
-            exit 1
-          fi
+          test -s Resources/Models.scnassets/guardian.obj
 
-      - name: Verify Apple tools
-        run: xcodebuild -version
-
-      - name: Install project generator
-        run: brew install xcodegen
-
-      - name: Verify required game assets
+      - name: Fix Swift compilation error
         shell: bash
         run: |
           set -euo pipefail
+          python3 - <<'PYFIX'
+          from pathlib import Path
+          p = Path('App/HorrorGameViewController.swift')
+          data = p.read_text(encoding='utf-8')
+          original = '            var low = SCNVector3Zero\n            var high = SCNVector3Zero\n            if parent.getBoundingBoxMin(&low, max: &high) {'
+          replacement = '            let bounds = parent.boundingBox\n            let low = bounds.min\n            let high = bounds.max\n            if high.y > low.y {'
+          if original in data:
+              p.write_text(data.replace(original, replacement, 1), encoding='utf-8')
+              print('SceneKit API fixed')
+          elif replacement not in data:
+              raise SystemExit('Expected code not found')
+          PYFIX
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Verify assets
+        run: |
           for asset in \
             project.yml \
             App/HorrorGameViewController.swift \
@@ -52,16 +58,13 @@ jobs:
             Resources/Models.scnassets/tubby_custard.obj \
             Resources/Audio/tinky_appearance.mp3 \
             App/Assets.xcassets/AppIcon.appiconset/AppIcon.png; do
-              if [ ! -s "$asset" ]; then
-                echo "::error::Missing required file: $asset"
-                exit 1
-              fi
+              test -s "$asset" || exit 1
           done
 
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Compile iPhone app unsigned
+      - name: Compile iPhone app
         shell: bash
         run: |
           set -euo pipefail
@@ -76,18 +79,14 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build 2>&1 | tee build.log
 
-      - name: Package unsigned IPA
-        shell: bash
+      - name: Package IPA
         run: |
-          set -euo pipefail
           APP="$RUNNER_TEMP/Derived/Build/Products/Release-iphoneos/LostChapter.app"
           test -d "$APP"
           mkdir -p package/Payload
           cp -R "$APP" package/Payload/
           cd package
           zip -q -r ../LostChapter-unsigned.ipa Payload
-          cd ..
-          test -s LostChapter-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
