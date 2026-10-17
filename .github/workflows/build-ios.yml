@@ -17,48 +17,51 @@ jobs:
       - name: Get project
         uses: actions/checkout@v4
 
+      - name: Unpack source ZIP if present
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP="Slendytubbies_Lost_Chapter_iPhone_0.7_Source_and_Build.zip"
+          if [ -f "$ZIP" ]; then
+            echo "Extracting $ZIP"
+            unzip -oq "$ZIP" -d .
+          else
+            echo "No ZIP found: checking for already extracted project files"
+          fi
+          if [ ! -s "Resources/Models.scnassets/guardian.obj" ]; then
+            echo "::error::Missing Resources/Models.scnassets/guardian.obj. Upload the full 0.7 ZIP at the repository root (not only the YAML)."
+            exit 1
+          fi
+
       - name: Verify Apple tools
         run: xcodebuild -version
 
       - name: Install project generator
         run: brew install xcodegen
 
-      - name: Convert user supplied GLB or FBX models if present
+      - name: Verify required game assets
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          for model in guardian infected; do
-            if [ -s "Resources/Models.scnassets/$model.obj" ]; then
-              echo "Bundled textured OBJ ready for $model"
-              continue
-            fi
-            for src in OriginalModels/"$model".glb OriginalModels/"$model".gltf OriginalModels/"$model".fbx OriginalModels/"$model".obj; do
-              if [ -f "$src" ]; then
-                if ! command -v assimp >/dev/null 2>&1; then
-                  brew install assimp
-                fi
-                assimp export "$src" "$RUNNER_TEMP/$model.dae" -fcollada
-                test -s "$RUNNER_TEMP/$model.dae"
-                cp "$RUNNER_TEMP/$model.dae" "Resources/Models.scnassets/$model.dae"
-                break
+          for asset in \
+            project.yml \
+            App/HorrorGameViewController.swift \
+            Resources/Models.scnassets/guardian.obj \
+            Resources/Models.scnassets/infected.obj \
+            Resources/Models.scnassets/main_land.obj \
+            Resources/Models.scnassets/tubby_custard.obj \
+            Resources/Audio/tinky_appearance.mp3 \
+            App/Assets.xcassets/AppIcon.appiconset/AppIcon.png; do
+              if [ ! -s "$asset" ]; then
+                echo "::error::Missing required file: $asset"
+                exit 1
               fi
-            done
           done
-
-      - name: Verify required game assets
-        run: |
-          test -s Resources/Models.scnassets/guardian.obj
-          test -s Resources/Models.scnassets/infected.obj
-          test -s Resources/Models.scnassets/main_land.obj
-          test -s Resources/Models.scnassets/tubby_custard.obj
-          test -s Resources/Audio/tinky_appearance.mp3
-          test -s App/Assets.xcassets/AppIcon.appiconset/AppIcon.png
 
       - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Compile iPhone app (unsigned)
+      - name: Compile iPhone app unsigned
         shell: bash
         run: |
           set -euo pipefail
@@ -73,7 +76,7 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build 2>&1 | tee build.log
 
-      - name: Package unsigned IPA for Signulous
+      - name: Package unsigned IPA
         shell: bash
         run: |
           set -euo pipefail
